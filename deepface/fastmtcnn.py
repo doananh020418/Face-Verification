@@ -19,16 +19,42 @@ mtcnn = MTCNN(
     keep_all=True,
     device=device
 )
+def adjust_gamma(image, gamma=1.0):
+
+   invGamma = 1.0 / gamma
+   table = np.array([((i / 255.0) ** invGamma) * 255
+      for i in np.arange(0, 256)]).astype("uint8")
+
+   return cv2.LUT(image, table)
+
+def hist_eq(img):
+    # img_yuv = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    # img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
+    # return cv2.cvtColor(img_yuv, cv2.COLOR_YCrCb2BGR)
+    image_equalize = cv2.cvtColor(img, cv2.COLOR_BGR2YUV)
+    channels = cv2.split(image_equalize)
+    #
+    channels[0] = cv2.equalizeHist(channels[0])
+    #
+    image_equalize = cv2.merge(channels)
+    image_equalize = cv2.cvtColor(image_equalize, cv2.COLOR_YUV2BGR)
+    image_equalize = cv2.medianBlur(image_equalize,3)
+    image_compare = np.hstack((img, image_equalize))
+    return image_equalize
+
 def register(vid):
-    scale = 1
+    scale = 0.25
     ptime = 0
     cap = cv2.VideoCapture(vid)
     count = 0
     frame_count = 0
-    while frame_count < 10:
-    #while True:
+    #while frame_count < 10:
+    while True:
         ret, frame = cap.read()
         frame = cv2.flip(frame, 1)
+        #frame = adjust_gamma(frame,1.2)
+        frame = hist_eq(frame)
+        #frame = cv2.bilateralFilter(frame, 5, 75, 75)
         frame_count = 0
         if ret:
             if  count % 1 == 0:
@@ -52,10 +78,10 @@ def register(vid):
                             text = f"{conf[0] * 100:.2f}%"
                             x, y, w, h = int(x/scale), int(y/scale), int(w/scale), int(h/scale)
                             detected_face = frame[int(y):int(h), int(x):int(w)]
-                            target_size = (224, 224)
 
 
                             frame_count = frame_count + 1
+
                             cv2.putText(frame, text, (x, y - 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 1, (170, 170, 170), 1)
                             cv2.rectangle(frame, (x, y), (w, h), (255, 255, 255), 1)

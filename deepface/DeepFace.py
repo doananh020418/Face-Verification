@@ -454,7 +454,7 @@ def analyze(img_path, actions = ['emotion', 'age', 'gender', 'race'] , models = 
 
 		return resp_obj
 
-def find(img_path, db_path, model_name ='Facenet', distance_metric = 'cosine', model = None, enforce_detection = True, detector_backend = 'mtcnn', align = True,delta = 1):
+def find(img_path, db_path, model_name ='VGG-Face', distance_metric = 'euclidean_l2', model = None, enforce_detection = True, detector_backend = 'facenet', align = True,delta = 1):
 
 	"""
 	This function applies verification several times and find an identity in a database

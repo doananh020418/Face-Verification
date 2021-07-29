@@ -3,6 +3,7 @@ import os
 import time
 
 import cv2
+import numpy as np
 import torch
 from facenet_pytorch import MTCNN
 from flask import Flask, Response, request, jsonify, render_template
@@ -14,7 +15,7 @@ from deepface.commons import functions, distance as dst
 
 app = Flask(__name__)
 print('loading')
-  # use 0 for web camera
+# use 0 for web camera
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -30,7 +31,8 @@ ALLOWED_EXTENSIONS = set(['jpg'])
 
 def get_model():
     global model
-    model = DeepFace.build_model('VGG-Face')
+    #model = DeepFace.build_model('VGG-Face')
+    model = DeepFace.build_model('Facenet')
 
 
 get_model()
@@ -38,7 +40,7 @@ get_model()
 
 def load():
     global base_df
-    base_df = get_df(db_path=os.path.abspath('static/hieu'), model=model)
+    base_df = get_df(db_path=os.path.abspath('static'), model=model)
 
 
 load()
@@ -47,20 +49,35 @@ load()
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def hist_eq(img):
+    # img_yuv = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    # img_yuv[:, :, 0] = cv2.equalizeHist(img_yuv[:, :, 0])
+    # return cv2.cvtColor(img_yuv, cv2.COLOR_YCrCb2BGR)
+    image_equalize = cv2.cvtColor(img, cv2.COLOR_BGR2YUV)
+    channels = cv2.split(image_equalize)
+    #
+    channels[0] = cv2.equalizeHist(channels[0])
+    #
+    image_equalize = cv2.merge(channels)
+    image_equalize = cv2.cvtColor(image_equalize, cv2.COLOR_YUV2BGR)
+    image_equalize = cv2.medianBlur(image_equalize,3)
+    image_compare = np.hstack((img, image_equalize))
+    return image_equalize
 
 def gen_frames(df):  # generate frame by frame from camera
     # print(len(df))
+    global model
     cap = cv2.VideoCapture(0)
     scale = 0.25
     frame_threshold = 10
-    time_threshold = 2
-    delta = 0.8
+    time_threshold = 3
+    delta = 0.866666
     model_name = 'VGG-Face'
     distance_metric = 'euclidean_l2'
-    input_shape = (224, 224)
-    text_color = (255, 255, 255)
+    input_shape = functions.find_input_shape(model)
     input_shape_x = input_shape[0]
     input_shape_y = input_shape[1]
+    text_color = (255, 255, 255)
     pivot_img_size = 112
 
     freeze = False
@@ -78,9 +95,11 @@ def gen_frames(df):  # generate frame by frame from camera
 
         raw_img = img.copy()
 
+
         resolution_x = img.shape[1]
         resolution_y = img.shape[0]
         frame = img.copy()
+        #frame = hist_eq(frame)
         frame = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)),
                            interpolation=cv2.INTER_AREA)
         if freeze == False:
@@ -121,7 +140,7 @@ def gen_frames(df):  # generate frame by frame from camera
 
             toc = time.time()
             if (toc - tic) <= time_threshold:
-
+            #if True:
                 if freezed_frame == 0:
                     freeze_img = base_img.copy()
                     # freeze_img = np.zeros(resolution, np.uint8) #here, np.uint8 handles showing white area issue
@@ -166,13 +185,14 @@ def gen_frames(df):  # generate frame by frame from camera
                                 employee_name = candidate['employee']
                                 best_distance = candidate['distance']
                                 name = candidate['name']
-                                print(name)
+                                print('Best distance', best_distance)
                                 if best_distance <= threshold * delta:
                                     display_img = cv2.imread(employee_name)
 
                                     display_img = cv2.resize(display_img, (pivot_img_size, pivot_img_size))
 
                                     label = name
+                                    print(name)
 
                                     try:
                                         if y - pivot_img_size > 0 and x + w + pivot_img_size < resolution_x:
@@ -291,7 +311,7 @@ def gen_frames(df):  # generate frame by frame from camera
                    b'Content-Type: image/jpeg\r\n\r\n' + img + b'\r\n')  # concat frame one by one and show result
 
     cap.release()
-    #cv2.destroyAllWindows()
+    cv2.destroyAllWindows()
 
 
 @app.route('/')
@@ -300,12 +320,28 @@ def home():
     return ret
 
 
+@app.route('/remove')
+def remove_employee():
+    global base_df
+    id_remove = request.args.get('id')
+    foldername = str(id_remove)
+    base_df = base_df[base_df['name'] != id_remove]
+    path = os.path.join(os.path.abspath('static'), foldername)
+    if os.path.exists(path):
+        files = glob.glob(path + '/*')
+        for f in files:
+            os.remove(f)
+
+
 @app.route('/stream')
 def streamimg():
     global df
     global base_df
     name = request.args.get('id')
-    df = base_df[base_df['name'] == name.strip()]
+    if name.strip() != 'all':
+        df = base_df[base_df['name'] == name.strip()]
+    else:
+        df = base_df
     print(len(df))
     return render_template('index.html')
 
@@ -352,6 +388,14 @@ def upload_file_api():
     return sc
 
 
+def adjust_gamma(image, gamma=1.0):
+    invGamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** invGamma) * 255
+                      for i in np.arange(0, 256)]).astype("uint8")
+
+    return cv2.LUT(image, table)
+
+
 def register():
     global id_reg
     global base_df
@@ -361,7 +405,7 @@ def register():
     if not os.path.exists(path):
         os.mkdir(path)
     else:
-        base_df = base_df.drop(base_df.loc[base_df['name'] == id_reg].index)
+        base_df = base_df[base_df['name'] != id_reg]
         files = glob.glob(path + '/*')
         for f in files:
             os.remove(f)
@@ -386,6 +430,9 @@ def register():
                         x, y, w, h = int(x / scale), int(y / scale), int(w / scale), int(h / scale)
                         if count % 10 == 0:
                             cv2.imwrite(path + '/%d.jpg' % (count), frame)
+
+                            process_frame1 = adjust_gamma(frame, 0.9)
+                            cv2.imwrite(path + '/%d_adjusted1.jpg' % (count), process_frame1)
                             print("frame %d saved" % count)
                             frame_count = frame_count + 1
                         cv2.putText(frame, text, (x, y - 20),
@@ -393,28 +440,31 @@ def register():
                         cv2.rectangle(frame, (x, y), (w, h), (255, 255, 255), 1)
 
         ctime = time.time()
-        fps = 1 / (ctime - ptime)
+        # fps = 1 / (ctime - ptime)
         ptime = ctime
-        cv2.putText(frame, f'FPS: {str(int(fps))}', (100, 40), cv2.FONT_HERSHEY_SIMPLEX
-                    , 1, (255, 67, 67), 1)
+        # cv2.putText(frame, f'FPS: {str(int(fps))}', (100, 40), cv2.FONT_HERSHEY_SIMPLEX
+        #             , 1, (255, 67, 67), 1)
         cv2.rectangle(frame, (10, 10), (90, 50), (255, 67, 67), -10)
         cv2.putText(frame, str(frame_count), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255),
                     1)
         count = count + 1
-        ret, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        try:
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        except:
+            continue
+    yield (b'--frame\r\n'
+           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
     cap.release()
     tic = time.time()
     tmp_df = add_employee(id_reg, path, model=model)
+    print("len tmp_df", len(tmp_df))
     base_df = base_df.append(tmp_df)
     toc = time.time()
     print('len base_df: ', len(base_df))
     print('function last {} secs'.format(int(toc - tic)))
-
-    #cv2.destroyAllWindows()
-
 
 
 @app.route('/register')
@@ -427,7 +477,6 @@ def stream():
     global id_reg
     id_reg = request.args.get('id')
     return render_template('index1.html')
-
 
 @app.route('/video_feed')
 def video_feed():

@@ -10,10 +10,8 @@ from deepface import DeepFace
 from deepface.commons import functions
 
 
-def get_df(db_path,model = None, model_name='VGG-Face', distance_metric='euclidean_l2'):
-    input_shape = (224, 224)
-    input_shape_x = input_shape[0]
-    input_shape_y = input_shape[1]
+def get_df(db_path, model=None, model_name='VGG-Face', distance_metric='euclidean_l2'):
+
 
     employees = []
     # check passed db folder exists
@@ -41,12 +39,7 @@ def get_df(db_path,model = None, model_name='VGG-Face', distance_metric='euclide
     input_shape_x = input_shape[0]
     input_shape_y = input_shape[1]
 
-        # tuned thresholds for model and metric pair
-        # threshold = dst.findThreshold(model_name, distance_metric)
 
-    # ------------------------
-
-    # find embeddings for employee list
 
     tic = time.time()
 
@@ -76,7 +69,7 @@ def get_df(db_path,model = None, model_name='VGG-Face', distance_metric='euclide
     return df
 
 
-# def anal(df,model_name, distance_metric
+# def anal(df, model_name, distance_metric
 #          , source=0, time_threshold=5, frame_threshold=5, delta=1):
 #     model = DeepFace.build_model(model_name)
 #     input_shape = (224, 224)
@@ -138,7 +131,6 @@ def get_df(db_path,model = None, model_name='VGG-Face', distance_metric='euclide
 #
 #                 cv2.putText(img, str(frame_threshold - face_included_frames), (int(x + w / 4), int(y + h / 1.5)),
 #                             cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 255, 255), 2)
-#
 #
 #                 # -------------------------------------
 #
@@ -342,7 +334,205 @@ def get_df(db_path,model = None, model_name='VGG-Face', distance_metric='euclide
 #     cv2.destroyAllWindows()
 
 
-def add_employee(id, db_path,model = None):
+def process_single_frame(img,df,model,face_included_frames = 0,frame_threshold = 10):
+    label = None
+    delta = 0.8
+    model_name = 'VGG-Face'
+    distance_metric = 'euclidean_l2'
+    input_shape = (224, 224)
+    text_color = (255, 255, 255)
+    input_shape_x = input_shape[0]
+    input_shape_y = input_shape[1]
+    pivot_img_size = 112
+    threshold = dst.findThreshold(model_name, distance_metric)
+
+    threshold = dst.findThreshold(model_name, distance_metric)
+
+    raw_img = img.copy()
+
+    frame = img.copy()
+    frame = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)),
+                       interpolation=cv2.INTER_AREA)
+    if freeze == False:
+        faces, conf = mtcnn.detect(frame)
+        if conf[0] == None:
+            face_included_frames = 0
+    else:
+        faces = []
+
+    detected_faces = []
+    face_index = 0
+    if conf[0] != None:
+        for (x, y, w, h) in faces:
+            if (w - x) > 100 * scale:
+                face_detected = True
+                if face_index == 0:
+                    face_included_frames = face_included_frames + 1  # increase frame for a single face
+                x, y, w, h = int(x / scale), int(y / scale), int((w - x) / scale), int((h - y) / scale)
+                cv2.rectangle(img, (x, y), (x + w, y + h), (255, 67, 67), 1)  # draw rectangle to main image
+
+                cv2.putText(img, str(frame_threshold - face_included_frames), (int(x + w / 4), int(y + h / 1.5)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 255, 255), 2)
+
+                # -------------------------------------
+
+                detected_faces.append((x, y, w, h))
+                face_index = face_index + 1
+
+        # -------------------------------------
+
+    if face_detected == True and face_included_frames == frame_threshold:
+        base_img = raw_img.copy()
+        detected_faces_final = detected_faces.copy()
+
+        freeze_img = base_img.copy()
+        # freeze_img = np.zeros(resolution, np.uint8) #here, np.uint8 handles showing white area issue
+
+        for detected_face in detected_faces_final:
+            x = detected_face[0]
+            y = detected_face[1]
+            w = detected_face[2]
+            h = detected_face[3]
+
+            cv2.rectangle(freeze_img, (x, y), (x + w, y + h), (255, 67, 67),
+                          1)
+
+            custom_face = base_img[y:y + h, x:x + w]
+
+            custom_face = functions.preprocess_face(img=custom_face,
+                                                    target_size=(input_shape_y, input_shape_x),
+                                                    enforce_detection=False, detector_backend='facenet')
+
+            if custom_face.shape[1:3] == input_shape:
+                if df.shape[0] > 0:
+                    img1_representation = model.predict(custom_face)[0, :]
+
+                    def findDistance(row):
+                        distance_metric = row['distance_metric']
+                        img2_representation = row['embedding']
+                        distance = 1000  # initialize very large value
+                        if distance_metric == 'cosine':
+                            distance = dst.findCosineDistance(img1_representation, img2_representation)
+                        elif distance_metric == 'euclidean':
+                            distance = dst.findEuclideanDistance(img1_representation, img2_representation)
+                        elif distance_metric == 'euclidean_l2':
+                            distance = dst.findEuclideanDistance(dst.l2_normalize(img1_representation),
+                                                                 dst.l2_normalize(img2_representation))
+
+                        return distance
+
+                    df['distance'] = df.apply(findDistance, axis=1)
+                    df = df.sort_values(by=["distance"])
+
+                    candidate = df.iloc[0]
+                    employee_name = candidate['employee']
+                    best_distance = candidate['distance']
+                    name = candidate['name']
+                    print(name)
+                    if best_distance <= threshold * delta:
+                        display_img = cv2.imread(employee_name)
+
+                        display_img = cv2.resize(display_img, (pivot_img_size, pivot_img_size))
+
+                        label = name
+
+                        try:
+                            if y - pivot_img_size > 0 and x + w + pivot_img_size < resolution_x:
+                                # top right
+                                freeze_img[y - pivot_img_size:y, x + w:x + w + pivot_img_size] = display_img
+
+                                overlay = freeze_img.copy();
+                                opacity = 0.4
+                                cv2.rectangle(freeze_img, (x + w, y), (x + w + pivot_img_size, y + 20),
+                                              (46, 200, 255), cv2.FILLED)
+                                cv2.addWeighted(overlay, opacity, freeze_img, 1 - opacity, 0, freeze_img)
+
+                                cv2.putText(freeze_img, label, (x + w, y + 10), cv2.FONT_HERSHEY_SIMPLEX,
+                                            0.5, text_color, 1)
+
+                                # connect face and text
+                                cv2.line(freeze_img, (x + int(w / 2), y),
+                                         (x + 3 * int(w / 4), y - int(pivot_img_size / 2)), (255, 67, 67),
+                                         1)
+                                cv2.line(freeze_img, (x + 3 * int(w / 4), y - int(pivot_img_size / 2)),
+                                         (x + w, y - int(pivot_img_size / 2)), (255, 67, 67), 1)
+
+                            elif y + h + pivot_img_size < resolution_y and x - pivot_img_size > 0:
+                                # bottom left
+                                freeze_img[y + h:y + h + pivot_img_size, x - pivot_img_size:x] = display_img
+
+                                overlay = freeze_img.copy();
+                                opacity = 0.4
+                                cv2.rectangle(freeze_img, (x - pivot_img_size, y + h - 20), (x, y + h),
+                                              (46, 200, 255), cv2.FILLED)
+                                cv2.addWeighted(overlay, opacity, freeze_img, 1 - opacity, 0, freeze_img)
+
+                                cv2.putText(freeze_img, label, (x - pivot_img_size, y + h - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1)
+
+                                # connect face and text
+                                cv2.line(freeze_img, (x + int(w / 2), y + h),
+                                         (x + int(w / 2) - int(w / 4), y + h + int(pivot_img_size / 2)),
+                                         (255, 67, 67), 1)
+                                cv2.line(freeze_img,
+                                         (x + int(w / 2) - int(w / 4), y + h + int(pivot_img_size / 2)),
+                                         (x, y + h + int(pivot_img_size / 2)), (255, 67, 67), 1)
+
+                            elif y - pivot_img_size > 0 and x - pivot_img_size > 0:
+                                # top left
+                                freeze_img[y - pivot_img_size:y, x - pivot_img_size:x] = display_img
+
+                                overlay = freeze_img.copy();
+                                opacity = 0.4
+                                cv2.rectangle(freeze_img, (x - pivot_img_size, y), (x, y + 20),
+                                              (46, 200, 255), cv2.FILLED)
+                                cv2.addWeighted(overlay, opacity, freeze_img, 1 - opacity, 0, freeze_img)
+
+                                cv2.putText(freeze_img, label, (x - pivot_img_size, y + 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1)
+
+                                # connect face and text
+                                cv2.line(freeze_img, (x + int(w / 2), y),
+                                         (x + int(w / 2) - int(w / 4), y - int(pivot_img_size / 2)),
+                                         (255, 67, 67), 1)
+                                cv2.line(freeze_img,
+                                         (x + int(w / 2) - int(w / 4), y - int(pivot_img_size / 2)),
+                                         (x, y - int(pivot_img_size / 2)), (255, 67, 67), 1)
+
+                            elif x + w + pivot_img_size < resolution_x and y + h + pivot_img_size < resolution_y:
+                                # bottom righ
+                                freeze_img[y + h:y + h + pivot_img_size,
+                                x + w:x + w + pivot_img_size] = display_img
+
+                                overlay = freeze_img.copy();
+                                opacity = 0.4
+                                cv2.rectangle(freeze_img, (x + w, y + h - 20),
+                                              (x + w + pivot_img_size, y + h), (46, 200, 255), cv2.FILLED)
+                                cv2.addWeighted(overlay, opacity, freeze_img, 1 - opacity, 0, freeze_img)
+
+                                cv2.putText(freeze_img, label, (x + w, y + h - 10),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1)
+
+                                # connect face and text
+                                cv2.line(freeze_img, (x + int(w / 2), y + h),
+                                         (x + int(w / 2) + int(w / 4), y + h + int(pivot_img_size / 2)),
+                                         (255, 67, 67), 1)
+                                cv2.line(freeze_img,
+                                         (x + int(w / 2) + int(w / 4), y + h + int(pivot_img_size / 2)),
+                                         (x + w, y + h + int(pivot_img_size / 2)), (255, 67, 67), 1)
+                        except Exception as err:
+                            print(str(err))
+
+        # cv2.rectangle(freeze_img, (10, 10), (90, 50), (255, 67, 67), -10)
+        # cv2.putText(freeze_img, str(time_left), (40, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1)
+
+        return freeze_img,face_included_frames,label
+    else:
+        return img,face_included_frames,label
+
+
+
+def add_employee(id, db_path, model=None):
     model_name = 'VGG-Face'
     distance_metric = 'euclidean_l2'
 
@@ -353,7 +543,7 @@ def add_employee(id, db_path,model = None):
                 if ('.jpg' in file):
                     exact_path = r + "/" + file
                     employees.append(exact_path)
-    if model == None :
+    if model == None:
         model = DeepFace.build_model(model_name)
         print(model_name, " is built")
     else:
@@ -381,9 +571,35 @@ def add_employee(id, db_path,model = None):
     tmp_df = pd.DataFrame(embeddings, columns=['employee', 'embedding', 'name'])
     tmp_df['distance_metric'] = distance_metric
 
-
     return tmp_df
 
-def remove_employee(id,df):
-    df = df.drop(df.loc[df['name']==id].index)
 
+def remove_employee(id, df):
+    df = df.drop(df.loc[df['name'] == id].index)
+
+
+def reg_frame(id,frame,frame_count,count,path,base_df,model,mtcnn):
+    frame = cv2.flip(frame, 1)
+    img = frame.copy()
+    img = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale)),
+                     interpolation=cv2.INTER_AREA)
+    boxes, conf = mtcnn.detect(img)
+
+    if conf[0] != None:
+        for (x, y, w, h) in boxes:
+            if (w - x) > 100 * scale:
+                text = f"{conf[0] * 100:.2f}%"
+                x, y, w, h = int(x / scale), int(y / scale), int(w / scale), int(h / scale)
+                if count % 10 == 0:
+                    cv2.imwrite(path + '/%d.jpg' % (count), frame)
+
+                    process_frame1 = adjust_gamma(frame, 0.9)
+                    cv2.imwrite(path + '/%d_adjusted1.jpg' % (count), process_frame1)
+                    print("frame %d saved" % count)
+                    frame_count = frame_count + 1
+                cv2.putText(frame, text, (x, y - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (170, 170, 170), 1)
+                cv2.rectangle(frame, (x, y), (w, h), (255, 255, 255), 1)
+    count = count+1
+
+    return frame_count,count,frame

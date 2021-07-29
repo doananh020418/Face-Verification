@@ -84,7 +84,7 @@ def load_image(img):
     return img
 
 
-def detect_face(img, detector_backend='mtcnn', grayscale=False,enforce_detection=True, align=True):
+def detect_face(img, detector_backend='facenet', grayscale=False,enforce_detection=True, align=True):
     img_region = [0, 0, img.shape[0], img.shape[1]]
 
     # detector stored in a global variable in FaceDetector object.
