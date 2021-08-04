@@ -336,7 +336,7 @@ def get_df(db_path, model=None, model_name='VGG-Face', distance_metric='euclidea
 
 def process_single_frame(img,df,model,face_included_frames = 0,frame_threshold = 10):
     label = None
-    delta = 0.8
+    delta = 0.866666666
     model_name = 'VGG-Face'
     distance_metric = 'euclidean_l2'
     input_shape = (224, 224)
